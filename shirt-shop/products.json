@@ -1,0 +1,66 @@
+{
+  "shop": {
+    "name": "ยืดดี",
+    "promptpay": "081-234-5678",
+    "promptpayName": "ร้านยืดดี",
+    "line": "@yuetdee",
+    "shipping": 40,
+    "freeShippingAt": 690,
+    "codFee": 20
+  },
+  "sizes": {
+    "regular": [["S", 36, 26], ["M", 38, 27], ["L", 40, 28], ["XL", 42, 29], ["2XL", 44, 30]],
+    "oversize": [["M", 44, 28], ["L", 46, 29], ["XL", 48, 30], ["2XL", 50, 31]],
+    "tank": [["S", 34, 26], ["M", 36, 27], ["L", 38, 28], ["XL", 40, 29]]
+  },
+  "products": [
+    {
+      "id": "basic-crew", "name": "คอกลมเบสิก", "category": "เบสิก", "shape": "tee", "fit": "regular",
+      "price": 199, "fabric": "Cotton 100% Comb No.32", "print": "",
+      "colors": [["ขาว", "#F7F7F5"], ["ดำ", "#1B1C20"], ["กรมท่า", "#1F2A48"], ["เทาท็อปดราย", "#9A9DA3"]],
+      "desc": "เนื้อผ้านุ่ม ใส่สบาย ไม่ย้วยง่าย ใส่ได้ทุกวัน"
+    },
+    {
+      "id": "oversize-plain", "name": "โอเวอร์ไซซ์ทรงหลวม", "category": "โอเวอร์ไซซ์", "shape": "oversize", "fit": "oversize",
+      "price": 290, "fabric": "Cotton 100% No.20 (ผ้าหนา)", "print": "",
+      "colors": [["ดำ", "#1B1C20"], ["ครีม", "#EDE6D6"], ["เขียวเสจ", "#9DAA8F"], ["น้ำตาลโกโก้", "#6B4E3D"]],
+      "desc": "ไหล่ตก ตัวยาวคลุมสะโพก ผ้าหนาอยู่ทรง"
+    },
+    {
+      "id": "sleepy", "name": "ง่วงแต่ไหว", "category": "สกรีนลาย", "shape": "tee", "fit": "regular",
+      "price": 259, "fabric": "Cotton 100% Comb No.32", "print": "ง่วง\nแต่ไหว",
+      "colors": [["ขาว", "#F7F7F5"], ["ดำ", "#1B1C20"], ["ฟ้าอ่อน", "#B9D3EA"]],
+      "desc": "สกรีน DTF สีไม่ลอก ซักเครื่องได้"
+    },
+    {
+      "id": "mookata", "name": "หมูกระทะคือคำตอบ", "category": "สกรีนลาย", "shape": "tee", "fit": "regular",
+      "price": 259, "fabric": "Cotton 100% Comb No.32", "print": "หมูกระทะ\nคือคำตอบ",
+      "colors": [["ขาว", "#F7F7F5"], ["แดงเลือดหมู", "#7A2230"], ["ดำ", "#1B1C20"]],
+      "desc": "สกรีน DTF สีไม่ลอก ซักเครื่องได้"
+    },
+    {
+      "id": "badminton", "name": "ขาดขาอีกหนึ่ง", "category": "สกรีนลาย", "shape": "oversize", "fit": "oversize",
+      "price": 320, "fabric": "Cotton 100% No.20 (ผ้าหนา)", "print": "ขาดขา\nอีก 1",
+      "colors": [["เขียวคอร์ท", "#17744F"], ["ขาว", "#F7F7F5"], ["ดำ", "#1B1C20"]],
+      "desc": "สำหรับก๊วนแบดที่คนไม่เคยครบ ทรงโอเวอร์ไซซ์"
+    },
+    {
+      "id": "polo", "name": "โปโลปิเก้", "category": "โปโล", "shape": "polo", "fit": "regular",
+      "price": 390, "fabric": "TC Pique (ผ้าจุติ)", "print": "",
+      "colors": [["กรมท่า", "#1F2A48"], ["ขาว", "#F7F7F5"], ["เขียวขวด", "#1E4A3A"]],
+      "desc": "ใส่ทำงานได้ ใส่เที่ยวได้ ผ้าไม่ร้อน"
+    },
+    {
+      "id": "longsleeve", "name": "แขนยาวคอกลม", "category": "เบสิก", "shape": "long", "fit": "regular",
+      "price": 350, "fabric": "Cotton 100% Comb No.32", "print": "",
+      "colors": [["ขาว", "#F7F7F5"], ["ดำ", "#1B1C20"], ["เทาชาร์โคล", "#44464C"]],
+      "desc": "กันแดดตอนขี่มอเตอร์ไซค์ หรือใส่ในห้องแอร์"
+    },
+    {
+      "id": "tank", "name": "เสื้อกล้าม", "category": "เบสิก", "shape": "tank", "fit": "tank",
+      "price": 159, "fabric": "Cotton 100% Comb No.32", "print": "",
+      "colors": [["ขาว", "#F7F7F5"], ["ดำ", "#1B1C20"], ["เทาท็อปดราย", "#9A9DA3"]],
+      "desc": "ใส่ออกกำลังกาย หรือใส่นอนหน้าร้อน"
+    }
+  ]
+}

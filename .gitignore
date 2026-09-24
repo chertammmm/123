@@ -1,0 +1,6 @@
+# ข้อมูลจริงของผู้ใช้/ลูกค้า ไม่เอาขึ้น repo
+data.json
+orders.json
+*.tmp
+__pycache__/
+.DS_Store
