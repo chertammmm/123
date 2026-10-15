@@ -1,104 +1,114 @@
 <!doctype html>
 <html lang="th">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>ก๊วนขาดขา</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=IBM+Plex+Sans+Thai:wght@400;500;600&display=swap">
-<link rel="stylesheet" href="style.css">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ตีด้วยกัน — หาเพื่อนตีแบด</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏸</text></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<div class="wrap">
-  <header class="hero">
-    <svg class="court" viewBox="0 0 1340 610" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
-      <!-- สนามแบดขนาดจริง 13.40 × 6.10 ม. (1 หน่วย = 1 ซม.) -->
-      <g fill="none" stroke="#fff" stroke-width="5">
-        <rect x="2.5" y="2.5" width="1335" height="605"/>
-        <line x1="0" y1="48" x2="1340" y2="48"/><line x1="0" y1="562" x2="1340" y2="562"/>
-        <line x1="76" y1="0" x2="76" y2="610"/><line x1="1264" y1="0" x2="1264" y2="610"/>
-        <line x1="472" y1="0" x2="472" y2="610"/><line x1="868" y1="0" x2="868" y2="610"/>
-        <line x1="0" y1="305" x2="472" y2="305"/><line x1="868" y1="305" x2="1340" y2="305"/>
-        <line x1="670" y1="-10" x2="670" y2="620" stroke-width="9" stroke-dasharray="4 10"/>
-      </g>
-    </svg>
-    <div>
-      <h1>ก๊วนขาดขา</h1>
-      <p>ก๊วนไหนขาดคนก็โพสต์ได้เลย ใส่สนาม เวลา ระดับมือ และค่าคอร์ท ใครว่างก็กดจอยได้ทันที</p>
+  <header class="topbar">
+    <div class="wrap topbar-inner">
+      <a href="#/" class="brand">
+        <span class="logo" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 3.5 9.5 14h5l3-10.5"/><path d="M10 3.5 11 14M14 3.5 13 14M6.5 3.5h11"/><path d="M9.5 14h5v1.5a2.5 2.5 0 0 1-5 0Z"/></svg>
+        </span>
+        ตีด้วยกัน
+      </a>
+      <nav class="nav" aria-label="เมนูหลัก">
+        <a href="#/" data-nav="posts">ค้นหาก๊วน</a>
+        <a href="#/my" data-nav="my">นัดของฉัน</a>
+        <a href="#/courts" data-nav="courts">สนามแบด</a>
+        <a href="#/players" data-nav="players">คอมมูนิตี้</a>
+      </nav>
+      <div class="top-actions">
+        <button class="btn primary" id="createBtn">
+          <svg class="i" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+          <span class="create-label">สร้างนัด</span>
+        </button>
+        <span id="account"></span>
+      </div>
     </div>
-    <div class="stat"><b id="statOpen">0</b><span>ที่ว่างรวมตอนนี้</span></div>
   </header>
 
-  <div class="bar">
-    <div class="chips" role="group" aria-label="วัน">
-      <button class="chip" data-day="all" aria-pressed="true">ทั้งหมด</button>
-      <button class="chip" data-day="today" aria-pressed="false">วันนี้</button>
-      <button class="chip" data-day="tomorrow" aria-pressed="false">พรุ่งนี้</button>
-      <button class="chip" data-day="weekend" aria-pressed="false">เสาร์–อาทิตย์</button>
-    </div>
-    <div class="tools">
-      <select id="fLevel" aria-label="มือของฉัน"><option value="">ทุกระดับมือ</option></select>
-      <input id="fQ" type="search" placeholder="ค้นหาสนาม / ย่าน" aria-label="ค้นหา" size="16">
-      <button class="btn" id="newBtn">+ ตั้งก๊วน</button>
-    </div>
-  </div>
+  <main class="wrap" id="view"></main>
 
-  <div id="list" class="list"><div class="empty">กำลังโหลด…</div></div>
-</div>
+  <footer class="wrap footer">
+    <nav><a href="#/">ค้นหาก๊วน</a><a href="#/courts">สนามแบด</a><a href="#/players">คอมมูนิตี้</a></nav>
+    <p>© 2569 ตีด้วยกัน · หาเพื่อนตีแบดใกล้คุณ</p>
+  </footer>
 
-<dialog id="newDlg">
-  <form id="newForm">
-    <h2>ตั้งก๊วนใหม่</h2>
-    <div class="grid2">
-      <label>ชื่อสนาม<input id="nVenue" required maxlength="60" placeholder="เช่น สนามแบด S.C. พระราม 9"></label>
-      <label>ย่าน / เขต<input id="nArea" maxlength="40" placeholder="เช่น ห้วยขวาง"></label>
-    </div>
-    <div class="grid3">
-      <label>วันที่<input id="nDate" type="date" required></label>
-      <label>เริ่ม<input id="nStart" type="time" required value="19:00"></label>
-      <label>ถึง<input id="nEnd" type="time" required value="21:00"></label>
-    </div>
-    <div class="grid3">
-      <label>มือต่ำสุด<select id="nMin"></select></label>
-      <label>มือสูงสุด<select id="nMax"></select></label>
-      <label>แบบ<select id="nMode"><option>คู่</option><option>เดี่ยว</option><option>คละ</option></select></label>
-    </div>
-    <div class="grid3">
-      <label>ขาดกี่ขา<input id="nNeed" type="number" min="1" max="20" value="2" required></label>
-      <label>ค่าคอร์ท/คน (฿)<input id="nCourt" type="number" min="0" value="100"></label>
-      <label>ลูกละ (฿, หาร 4)<input id="nShuttle" type="number" min="0" value="80"></label>
-    </div>
-    <div class="grid2">
-      <label>ชื่อเล่นคนตั้ง<input id="nNick" required maxlength="24"></label>
-      <label>ติดต่อ (LINE ID)<input id="nContact" maxlength="40" placeholder="@yourline"></label>
-    </div>
-    <label>รายละเอียดเพิ่ม<textarea id="nNote" rows="2" maxlength="240" placeholder="เช่น ใช้ลูก RSL 3 ขอคนตีเกมยาวได้"></textarea></label>
-    <p class="err" id="newErr" hidden></p>
-    <div class="row-end">
-      <button type="button" class="btn ghost" data-close>ยกเลิก</button>
-      <button type="submit" class="btn">โพสต์ก๊วน</button>
-    </div>
-  </form>
-</dialog>
+  <!-- เข้าสู่ระบบ / สมัคร -->
+  <dialog id="authDialog">
+    <form method="dialog" class="sheet" id="authForm">
+      <div class="tabs">
+        <button type="button" data-mode="login" class="tab active">เข้าสู่ระบบ</button>
+        <button type="button" data-mode="register" class="tab">สมัครสมาชิก</button>
+      </div>
+      <label>ชื่อผู้ใช้ <input name="username" autocomplete="username" required maxlength="20" placeholder="a-z, 0-9, _"></label>
+      <label>รหัสผ่าน <input name="password" type="password" autocomplete="current-password" required minlength="6"></label>
+      <div class="register-only" id="registerFields"></div>
+      <p class="form-error" id="authError"></p>
+      <div class="actions">
+        <button type="button" class="btn ghost" data-close>ยกเลิก</button>
+        <button type="submit" class="btn primary" id="authSubmit">เข้าสู่ระบบ</button>
+      </div>
+    </form>
+  </dialog>
 
-<dialog id="joinDlg">
-  <form id="joinForm">
-    <h2>ขอจอยก๊วน</h2>
-    <p class="msg" id="joinWhat"></p>
-    <div class="grid2">
-      <label>ชื่อเล่น<input id="jNick" required maxlength="24"></label>
-      <label>มือของคุณ<select id="jLevel"></select></label>
-    </div>
-    <p class="err" id="joinErr" hidden></p>
-    <div class="row-end">
-      <button type="button" class="btn ghost" data-close>ยกเลิก</button>
-      <button type="submit" class="btn">จอยเลย</button>
-    </div>
-  </form>
-</dialog>
+  <!-- สร้างนัด -->
+  <dialog id="postDialog">
+    <form method="dialog" class="sheet" id="postForm">
+      <h2>สร้างนัดตีแบด</h2>
+      <label>ชื่อนัด <input name="title" maxlength="60" placeholder="เช่น เลิกงานแล้ว มาตีแบดกัน"></label>
+      <label>สนาม <input name="court" required maxlength="80" placeholder="เช่น สนามแบดมินตันเลนเซ็นเตอร์"></label>
+      <label>ย่าน / เขต <input name="area" maxlength="60" placeholder="เช่น ลาดพร้าว"></label>
+      <div class="row">
+        <label>วันที่ <input name="date" type="date" required></label>
+        <label>เริ่ม <input name="time" type="time" required></label>
+        <label>ถึง <input name="endTime" type="time"></label>
+      </div>
+      <div class="row">
+        <label>ระดับ <select name="level" id="postLevel"></select></label>
+        <label>ขาดกี่คน <input name="need" type="number" min="1" max="20" value="2" required></label>
+        <label>ค่าคอร์ท/คน (บาท) <input name="cost" type="number" min="0" max="10000" placeholder="0"></label>
+      </div>
+      <label>รายละเอียดเพิ่มเติม <textarea name="note" maxlength="300" rows="2" placeholder="เช่น มีลูกให้ แชร์ค่าลูกกันเอง"></textarea></label>
+      <p class="hint">ชื่อและช่องทางติดต่อจะดึงจากโปรไฟล์ของคุณ</p>
+      <p class="form-error" id="postError"></p>
+      <div class="actions">
+        <button type="button" class="btn ghost" data-close>ยกเลิก</button>
+        <button type="submit" class="btn primary">สร้างนัด</button>
+      </div>
+    </form>
+  </dialog>
 
-<div class="toast" id="toast" hidden></div>
-<script src="app.js"></script>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <template id="profileFields">
+    <label>ชื่อที่แสดง <input name="displayName" required maxlength="40" placeholder="ชื่อเล่น"></label>
+    <fieldset>
+      <legend>อวตาร</legend>
+      <div class="avatar-pick" data-avatars></div>
+    </fieldset>
+    <div class="row">
+      <label>ระดับฝีมือ <select name="level" data-player-levels required></select></label>
+      <label>ย่านที่สะดวก <input name="area" maxlength="60" placeholder="เช่น ลาดพร้าว"></label>
+    </div>
+    <label>ช่องทางติดต่อ <input name="contact" maxlength="80" placeholder="LINE ID หรือเบอร์โทร"></label>
+    <fieldset>
+      <legend>วันที่สะดวก</legend>
+      <div class="chips" data-days></div>
+    </fieldset>
+    <label>ช่วงเวลาที่สะดวก <input name="times" maxlength="60" placeholder="เช่น หลังเลิกงาน 19:00 เป็นต้นไป"></label>
+    <label>แนะนำตัว <textarea name="bio" maxlength="300" rows="3" placeholder="ตีมากี่ปี ชอบตีคู่หรือเดี่ยว ฯลฯ"></textarea></label>
+    <label class="check"><input type="checkbox" name="lookingForPartner"> กำลังหาเพื่อนตี / คู่ตีประจำ</label>
+  </template>
+
+  <script src="app.js"></script>
 </body>
 </html>

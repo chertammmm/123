@@ -1,255 +1,423 @@
-"""ก๊วนขาดขา — เว็บนัดเพื่อนตีแบด
+"""เว็บหาเพื่อนตีแบต — เซิร์ฟเวอร์ Python ล้วน ไม่ต้องติดตั้งอะไรเพิ่ม
 
-รันด้วย:  python3 server.py
-แล้วเปิด  http://localhost:8000
-
-ใช้แค่ไลบรารีมาตรฐานของ Python 3.8+ ไม่ต้องติดตั้งอะไรเพิ่ม
-ข้อมูลเก็บในไฟล์ data.json ข้าง ๆ ไฟล์นี้
+รัน:  python3 server.py   แล้วเปิด http://localhost:8000
 """
 
+import hashlib
 import json
 import os
 import re
+import secrets
 import threading
 import time
-import uuid
-from datetime import date
+from datetime import date, datetime
+from http.cookies import SimpleCookie
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
+from urllib.parse import unquote, urlparse
 
-ROOT = Path(__file__).resolve().parent
-STATIC = ROOT / "static"
-DATA_FILE = ROOT / "data.json"
+ROOT = os.path.dirname(os.path.abspath(__file__))
+STATIC_DIR = os.path.join(ROOT, "static")
+DATA_FILE = os.path.join(ROOT, "data.json")
 PORT = int(os.environ.get("PORT", "8000"))
 
-LEVELS = ["BG", "N", "S", "P-", "P", "P+"]
-MODES = ["คู่", "เดี่ยว", "คละ"]
-MAX_SESSIONS = 500
+LEVELS = ["มือใหม่", "เริ่มต้น", "กลาง", "เก่ง", "ทุกระดับ"]
+PLAYER_LEVELS = LEVELS[:-1]  # "ทุกระดับ" ใช้กับก๊วนเท่านั้น
+DAYS = ["จ", "อ", "พ", "พฤ", "ศ", "ส", "อา"]
+AVATARS = ["🏸", "🦅", "🐯", "🐼", "🦊", "🐱", "🐶", "🐸", "🦄", "🔥", "⚡", "🌟"]
+
+MAX_BODY = 16 * 1024
+SESSION_AGE = 30 * 24 * 3600
+PBKDF2_ROUNDS = 200_000
+LOGIN_LIMIT, LOGIN_WINDOW = 5, 600  # ล็อกอินผิดได้ 5 ครั้งใน 10 นาที
 
 lock = threading.Lock()
+login_failures = {}  # ip -> [timestamps]
+
+
+class ApiError(Exception):
+    def __init__(self, status, message):
+        super().__init__(message)
+        self.status = status
 
 
 # ---------- storage ----------
-
-def load():
-    if not DATA_FILE.exists():
-        return {"sessions": []}
-    with DATA_FILE.open(encoding="utf-8") as f:
-        return json.load(f)
-
-
-def save(data):
-    tmp = DATA_FILE.with_suffix(".tmp")
-    with tmp.open("w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-    tmp.replace(DATA_FILE)
+def load_db():
+    try:
+        with open(DATA_FILE, encoding="utf-8") as f:
+            db = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        db = {}
+    db.setdefault("users", [])
+    db.setdefault("sessions", {})
+    db.setdefault("posts", [])
+    return db
 
 
-def prune(data):
-    """ลบก๊วนที่ผ่านไปแล้วเกิน 1 วัน"""
+def save_db(db):
+    now = time.time()
     today = date.today().isoformat()
-    data["sessions"] = [s for s in data["sessions"] if s["date"] >= today]
+    # ล้างของหมดอายุทุกครั้งที่เขียน ไฟล์จะได้ไม่โตเรื่อยๆ
+    db["sessions"] = {t: s for t, s in db["sessions"].items() if s["expires"] > now}
+    db["posts"] = [p for p in db["posts"] if p["date"] >= today]
+    tmp = DATA_FILE + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(db, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, DATA_FILE)
 
 
 # ---------- validation ----------
-
-class BadRequest(Exception):
-    pass
-
-
-def text(body, key, max_len, required=False):
-    v = str(body.get(key) or "").strip()[:max_len]
-    if required and not v:
-        raise BadRequest("กรุณากรอก " + key)
-    return v
+def text(data, field, label, max_len, required=True):
+    value = str(data.get(field) or "").strip()
+    if required and not value:
+        raise ApiError(400, f"กรุณากรอก{label}")
+    if len(value) > max_len:
+        raise ApiError(400, f"{label}ยาวเกิน {max_len} ตัวอักษร")
+    return value
 
 
-def integer(body, key, lo, hi, default=0):
+def number(data, field, label, lo, hi, default=None):
+    raw = data.get(field)
+    if raw in (None, "") and default is not None:
+        return default
     try:
-        v = int(body.get(key, default))
+        value = int(raw)
     except (TypeError, ValueError):
-        raise BadRequest(key + " ต้องเป็นตัวเลข")
-    return max(lo, min(hi, v))
+        raise ApiError(400, f"{label}ไม่ถูกต้อง")
+    if not lo <= value <= hi:
+        raise ApiError(400, f"{label}ต้องอยู่ระหว่าง {lo}–{hi}")
+    return value
 
 
-def valid_date(v):
-    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", v or ""):
-        raise BadRequest("รูปแบบวันที่ไม่ถูกต้อง")
-    if v < date.today().isoformat():
-        raise BadRequest("เลือกวันที่วันนี้หรือหลังจากนี้")
-    return v
+def validate_profile(data):
+    profile = {
+        "displayName": text(data, "displayName", "ชื่อที่แสดง", 40),
+        "avatar": text(data, "avatar", "อวตาร", 8, required=False) or AVATARS[0],
+        "level": text(data, "level", "ระดับฝีมือ", 20),
+        "area": text(data, "area", "ย่านที่สะดวก", 60, required=False),
+        "contact": text(data, "contact", "ช่องทางติดต่อ", 80, required=False),
+        "times": text(data, "times", "ช่วงเวลาที่สะดวก", 60, required=False),
+        "bio": text(data, "bio", "แนะนำตัว", 300, required=False),
+        "lookingForPartner": bool(data.get("lookingForPartner")),
+    }
+    if profile["avatar"] not in AVATARS:
+        raise ApiError(400, "อวตารไม่ถูกต้อง")
+    if profile["level"] not in PLAYER_LEVELS:
+        raise ApiError(400, "ระดับฝีมือไม่ถูกต้อง")
+    days = data.get("days") or []
+    if not isinstance(days, list) or any(d not in DAYS for d in days):
+        raise ApiError(400, "วันที่สะดวกไม่ถูกต้อง")
+    profile["days"] = [d for d in DAYS if d in days]
+    return profile
 
 
-def valid_time(v):
-    if not re.fullmatch(r"\d{2}:\d{2}", v or ""):
-        raise BadRequest("รูปแบบเวลาไม่ถูกต้อง")
-    return v
+def validate_post(data):
+    post = {
+        "title": text(data, "title", "ชื่อนัด", 60, required=False),
+        "court": text(data, "court", "ชื่อสนาม", 80),
+        "area": text(data, "area", "ย่าน", 60, required=False),
+        "date": text(data, "date", "วันที่", 10),
+        "time": text(data, "time", "เวลาเริ่ม", 5),
+        "endTime": text(data, "endTime", "เวลาจบ", 5, required=False),
+        "level": text(data, "level", "ระดับฝีมือ", 20),
+        "note": text(data, "note", "หมายเหตุ", 300, required=False),
+        "need": number(data, "need", "จำนวนคนที่ขาด", 1, 20),
+        "cost": number(data, "cost", "ค่าใช้จ่ายต่อคน", 0, 10000, default=0),
+    }
+    try:
+        play_day = datetime.strptime(post["date"], "%Y-%m-%d").date()
+    except ValueError:
+        raise ApiError(400, "รูปแบบวันที่ไม่ถูกต้อง")
+    if play_day < date.today():
+        raise ApiError(400, "วันที่ต้องไม่ย้อนหลัง")
+    for f in ("time", "endTime"):
+        if post[f] and not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", post[f]):
+            raise ApiError(400, "รูปแบบเวลาไม่ถูกต้อง")
+    if post["level"] not in LEVELS:
+        raise ApiError(400, "ระดับฝีมือไม่ถูกต้อง")
+    return post
 
 
-def new_session(body, player_id):
-    level_min = integer(body, "levelMin", 0, len(LEVELS) - 1)
-    level_max = integer(body, "levelMax", 0, len(LEVELS) - 1)
-    if level_min > level_max:
-        raise BadRequest("มือต่ำสุดต้องไม่สูงกว่ามือสูงสุด")
-    mode = body.get("mode")
+# ---------- auth ----------
+def hash_password(password, salt):
+    return hashlib.pbkdf2_hmac(
+        "sha256", password.encode("utf-8"), bytes.fromhex(salt), PBKDF2_ROUNDS
+    ).hex()
+
+
+def check_login_limit(ip):
+    now = time.time()
+    recent = [t for t in login_failures.get(ip, []) if now - t < LOGIN_WINDOW]
+    login_failures[ip] = recent
+    if len(recent) >= LOGIN_LIMIT:
+        raise ApiError(429, "ล็อกอินผิดหลายครั้งเกินไป ลองใหม่อีก 10 นาที")
+
+
+# ---------- shaping output ----------
+def find_user(db, user_id=None, username=None):
+    for u in db["users"]:
+        if u["id"] == user_id or (username and u["username"] == username.lower()):
+            return u
+    return None
+
+
+def user_card(u):
+    """ข้อมูลย่อของผู้ใช้ ใช้แสดงในการ์ดก๊วน"""
     return {
-        "id": uuid.uuid4().hex[:12],
-        "venue": text(body, "venue", 60, required=True),
-        "area": text(body, "area", 40),
-        "date": valid_date(body.get("date")),
-        "start": valid_time(body.get("start")),
-        "end": valid_time(body.get("end")),
-        "levelMin": level_min,
-        "levelMax": level_max,
-        "mode": mode if mode in MODES else "คู่",
-        "need": integer(body, "need", 1, 20, 2),
-        "courtFee": integer(body, "courtFee", 0, 10000),
-        "shuttleFee": integer(body, "shuttleFee", 0, 10000),
-        "contact": text(body, "contact", 40),
-        "note": text(body, "note", 240),
-        "hostNick": text(body, "hostNick", 24, required=True),
-        "hostId": player_id,
-        "players": [],
-        "createdAt": int(time.time()),
+        "username": u["username"],
+        "displayName": u["displayName"],
+        "avatar": u["avatar"],
+        "level": u["level"],
     }
 
 
-def public_view(s, player_id):
-    """ข้อมูลที่ส่งให้หน้าเว็บ: ซ่อน id ของผู้เล่น และโชว์ LINE เฉพาะคนตั้งกับคนที่จอยแล้ว"""
-    is_host = s["hostId"] == player_id
-    joined = any(p["id"] == player_id for p in s["players"])
-    out = {k: v for k, v in s.items() if k not in ("hostId", "players", "contact")}
-    out["isHost"] = is_host
-    out["joined"] = joined
-    out["contact"] = s["contact"] if (is_host or joined) else ""
-    out["players"] = [
-        {"nick": p["nick"], "level": p["level"], "isMe": p["id"] == player_id}
-        for p in s["players"]
-    ]
+def public_user(u, viewer):
+    """จุดเดียวที่แปลงข้อมูลผู้ใช้ก่อนส่งออก — ห้ามส่ง hash/salt ออกไป
+    ช่องทางติดต่อเห็นเฉพาะคนที่ล็อกอินแล้ว"""
+    out = user_card(u)
+    for f in ("area", "times", "bio", "days", "lookingForPartner", "createdAt"):
+        out[f] = u[f]
+    if viewer:
+        out["contact"] = u["contact"]
     return out
 
 
-# ---------- HTTP ----------
+def public_post(db, post, viewer):
+    host = find_user(db, post["hostId"])
+    players = [find_user(db, pid) for pid in post["players"]]
+    out = {k: v for k, v in post.items() if k not in ("hostId", "players")}
+    out["host"] = user_card(host) if host else None
+    if host and viewer:
+        out["host"]["contact"] = host["contact"]
+    out["players"] = [user_card(p) for p in players if p]
+    out["spotsLeft"] = post["need"] - len(post["players"])
+    if viewer:
+        out["isHost"] = post["hostId"] == viewer["id"]
+        out["joined"] = viewer["id"] in post["players"]
+    return out
 
+
+def upcoming(db):
+    today = date.today().isoformat()
+    posts = [p for p in db["posts"] if p["date"] >= today]
+    return sorted(posts, key=lambda p: (p["date"], p["time"]))
+
+
+# ---------- HTTP ----------
 class Handler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
-        super().__init__(*args, directory=str(STATIC), **kwargs)
+        super().__init__(*args, directory=STATIC_DIR, **kwargs)
 
-    def log_message(self, fmt, *args):
-        if self.path.startswith("/api/"):
-            super().log_message(fmt, *args)
-
-    # helpers
-    def player_id(self):
-        pid = self.headers.get("X-Player-Id", "")
-        if not re.fullmatch(r"[A-Za-z0-9-]{8,64}", pid):
-            raise BadRequest("ไม่พบรหัสผู้เล่น ลองรีเฟรชหน้าเว็บ")
-        return pid
-
-    def body(self):
-        n = int(self.headers.get("Content-Length") or 0)
-        if n > 10000:
-            raise BadRequest("ข้อมูลยาวเกินไป")
-        try:
-            return json.loads(self.rfile.read(n) or b"{}")
-        except ValueError:
-            raise BadRequest("ข้อมูลไม่ใช่ JSON")
-
-    def send_json(self, status, payload):
-        raw = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    def send_json(self, status, payload, cookie=None):
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(raw)))
+        self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
+        if cookie is not None:
+            self.send_header("Set-Cookie", cookie)
         self.end_headers()
-        self.wfile.write(raw)
+        self.wfile.write(body)
 
-    def route(self, method):
-        m = re.fullmatch(r"/api/sessions(?:/([a-f0-9]{12})(/join)?)?/?", self.path.split("?")[0])
-        if not m:
-            return self.send_json(404, {"error": "ไม่พบหน้านี้"})
-        sid, join = m.group(1), m.group(2)
+    def read_json(self):
+        if not self.headers.get("Content-Type", "").startswith("application/json"):
+            raise ApiError(415, "ต้องส่งข้อมูลเป็น JSON")
+        length = int(self.headers.get("Content-Length") or 0)
+        if length > MAX_BODY:
+            raise ApiError(413, "ข้อมูลใหญ่เกินไป")
+        raw = self.rfile.read(length) if length else b"{}"
         try:
-            pid = self.player_id()
-            with lock:
-                data = load()
-                prune(data)
-                result = self.handle_api(method, data, sid, join, pid)
-            self.send_json(*result)
-        except BadRequest as e:
-            self.send_json(400, {"error": str(e)})
+            data = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            raise ApiError(400, "ข้อมูลไม่ถูกต้อง")
+        if not isinstance(data, dict):
+            raise ApiError(400, "ข้อมูลไม่ถูกต้อง")
+        return data
 
-    def handle_api(self, method, data, sid, join, pid):
-        sessions = data["sessions"]
+    def session_token(self):
+        cookie = SimpleCookie(self.headers.get("Cookie", ""))
+        return cookie["sid"].value if "sid" in cookie else None
 
-        if method == "GET" and not sid:
-            sessions.sort(key=lambda s: (s["date"], s["start"]))
-            return 200, {"sessions": [public_view(s, pid) for s in sessions]}
+    def current_user(self, db):
+        session = db["sessions"].get(self.session_token() or "")
+        if not session or session["expires"] < time.time():
+            return None
+        return find_user(db, session["userId"])
 
-        if method == "POST" and not sid:
-            if len(sessions) >= MAX_SESSIONS:
-                raise BadRequest("บอร์ดเต็มแล้ว รอให้ก๊วนเก่าหมดเวลาก่อน")
-            s = new_session(self.body(), pid)
-            sessions.append(s)
-            save(data)
-            return 201, public_view(s, pid)
+    def require_user(self, db):
+        user = self.current_user(db)
+        if not user:
+            raise ApiError(401, "กรุณาเข้าสู่ระบบก่อน")
+        return user
 
-        s = next((x for x in sessions if x["id"] == sid), None)
-        if s is None:
-            return 404, {"error": "ไม่พบก๊วนนี้ อาจถูกลบไปแล้ว"}
-
-        if method == "DELETE" and not join:
-            if s["hostId"] != pid:
-                return 403, {"error": "ลบได้เฉพาะคนตั้งก๊วน"}
-            sessions.remove(s)
-            save(data)
-            return 200, {"ok": True}
-
-        if method == "POST" and join:
-            if s["hostId"] == pid:
-                raise BadRequest("คุณเป็นคนตั้งก๊วนนี้อยู่แล้ว")
-            if any(p["id"] == pid for p in s["players"]):
-                raise BadRequest("คุณจอยก๊วนนี้แล้ว")
-            if len(s["players"]) >= s["need"]:
-                raise BadRequest("ก๊วนนี้เต็มแล้ว")
-            body = self.body()
-            s["players"].append({
-                "id": pid,
-                "nick": text(body, "nick", 24, required=True),
-                "level": integer(body, "level", 0, len(LEVELS) - 1),
-                "at": int(time.time()),
-            })
-            save(data)
-            return 200, public_view(s, pid)
-
-        if method == "DELETE" and join:
-            s["players"] = [p for p in s["players"] if p["id"] != pid]
-            save(data)
-            return 200, public_view(s, pid)
-
-        return 405, {"error": "ไม่รองรับคำสั่งนี้"}
+    def start_session(self, db, user):
+        token = secrets.token_urlsafe(32)
+        db["sessions"][token] = {"userId": user["id"], "expires": time.time() + SESSION_AGE}
+        return f"sid={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age={SESSION_AGE}"
 
     def do_GET(self):
-        if self.path.startswith("/api/"):
-            return self.route("GET")
-        return super().do_GET()
+        path = urlparse(self.path).path
+        if not path.startswith("/api/"):
+            return super().do_GET()
+        try:
+            with lock:
+                db = load_db()
+                viewer = self.current_user(db)
+                if path == "/api/me":
+                    me = public_user(viewer, viewer) if viewer else None
+                    return self.send_json(200, {
+                        "me": me, "levels": LEVELS, "playerLevels": PLAYER_LEVELS,
+                        "days": DAYS, "avatars": AVATARS,
+                    })
+                if path == "/api/posts":
+                    posts = [public_post(db, p, viewer) for p in upcoming(db)]
+                    return self.send_json(200, {"posts": posts})
+                if path == "/api/players":
+                    users = sorted(
+                        db["users"],
+                        key=lambda u: (not u["lookingForPartner"], -u["createdAt"]),
+                    )
+                    return self.send_json(200, {"players": [public_user(u, viewer) for u in users]})
+                m = re.fullmatch(r"/api/players/([^/]+)", path)
+                if m:
+                    user = find_user(db, username=unquote(m.group(1)))
+                    if not user:
+                        raise ApiError(404, "ไม่พบผู้เล่นคนนี้")
+                    posts = [
+                        public_post(db, p, viewer) for p in upcoming(db)
+                        if p["hostId"] == user["id"] or user["id"] in p["players"]
+                    ]
+                    return self.send_json(200, {"player": public_user(user, viewer), "posts": posts})
+            raise ApiError(404, "ไม่พบหน้านี้")
+        except ApiError as e:
+            return self.send_json(e.status, {"error": str(e)})
 
     def do_POST(self):
-        self.route("POST")
+        path = urlparse(self.path).path
+        routes = {
+            "/api/register": self.register,
+            "/api/login": self.login,
+            "/api/logout": self.logout,
+            "/api/me": self.update_me,
+            "/api/posts": self.create_post,
+        }
+        try:
+            data = self.read_json()
+            if path in routes:
+                return routes[path](data)
+            m = re.fullmatch(r"/api/posts/([\w-]+)/(join|leave|delete)", path)
+            if m:
+                return self.post_action(m.group(1), m.group(2))
+            raise ApiError(404, "ไม่พบหน้านี้")
+        except ApiError as e:
+            return self.send_json(e.status, {"error": str(e)})
 
-    def do_DELETE(self):
-        self.route("DELETE")
+    # ---------- account ----------
+    def register(self, data):
+        username = text(data, "username", "ชื่อผู้ใช้", 20).lower()
+        if not re.fullmatch(r"[a-z0-9_]{3,20}", username):
+            raise ApiError(400, "ชื่อผู้ใช้ต้องเป็น a-z, 0-9 หรือ _ ยาว 3–20 ตัว")
+        password = str(data.get("password") or "")
+        if not 6 <= len(password) <= 128:
+            raise ApiError(400, "รหัสผ่านต้องยาว 6 ตัวขึ้นไป")
+        profile = validate_profile(data)
+        salt = secrets.token_hex(16)
+        pw_hash = hash_password(password, salt)  # คำนวณนอก lock เพราะช้า
+        with lock:
+            db = load_db()
+            if find_user(db, username=username):
+                raise ApiError(409, "ชื่อผู้ใช้นี้มีคนใช้แล้ว")
+            user = {
+                "id": secrets.token_urlsafe(8),
+                "username": username,
+                "pwSalt": salt,
+                "pwHash": pw_hash,
+                "createdAt": int(time.time()),
+                **profile,
+            }
+            db["users"].append(user)
+            cookie = self.start_session(db, user)
+            save_db(db)
+        return self.send_json(201, {"me": public_user(user, user)}, cookie)
+
+    def login(self, data):
+        ip = self.client_address[0]
+        check_login_limit(ip)
+        username = str(data.get("username") or "").strip().lower()
+        password = str(data.get("password") or "")
+        with lock:
+            user = find_user(load_db(), username=username) if username else None
+        ok = user and secrets.compare_digest(hash_password(password, user["pwSalt"]), user["pwHash"])
+        if not ok:
+            login_failures.setdefault(ip, []).append(time.time())
+            raise ApiError(401, "ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง")
+        login_failures.pop(ip, None)
+        with lock:
+            db = load_db()
+            cookie = self.start_session(db, user)
+            save_db(db)
+        return self.send_json(200, {"me": public_user(user, user)}, cookie)
+
+    def logout(self, data):
+        with lock:
+            db = load_db()
+            if db["sessions"].pop(self.session_token() or "", None):
+                save_db(db)
+        return self.send_json(200, {"ok": True}, "sid=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0")
+
+    def update_me(self, data):
+        profile = validate_profile(data)
+        with lock:
+            db = load_db()
+            user = self.require_user(db)
+            user.update(profile)
+            save_db(db)
+        return self.send_json(200, {"me": public_user(user, user)})
+
+    # ---------- posts ----------
+    def create_post(self, data):
+        post = validate_post(data)
+        with lock:
+            db = load_db()
+            user = self.require_user(db)
+            post.update(
+                id=secrets.token_urlsafe(6),
+                hostId=user["id"],
+                players=[],
+                createdAt=int(time.time()),
+            )
+            db["posts"].append(post)
+            save_db(db)
+            return self.send_json(201, {"post": public_post(db, post, user)})
+
+    def post_action(self, post_id, action):
+        with lock:
+            db = load_db()
+            user = self.require_user(db)
+            post = next((p for p in db["posts"] if p["id"] == post_id), None)
+            if not post:
+                raise ApiError(404, "ไม่พบก๊วนนี้ (อาจถูกลบไปแล้ว)")
+            if action == "join":
+                if post["hostId"] == user["id"]:
+                    raise ApiError(409, "คุณเป็นเจ้าของก๊วนนี้อยู่แล้ว")
+                if user["id"] in post["players"]:
+                    raise ApiError(409, "คุณลงชื่อไว้แล้ว")
+                if len(post["players"]) >= post["need"]:
+                    raise ApiError(409, "ก๊วนนี้เต็มแล้ว")
+                post["players"].append(user["id"])
+            elif action == "leave":
+                if user["id"] not in post["players"]:
+                    raise ApiError(409, "คุณไม่ได้อยู่ในก๊วนนี้")
+                post["players"].remove(user["id"])
+            elif action == "delete":
+                if post["hostId"] != user["id"]:
+                    raise ApiError(403, "ลบได้เฉพาะเจ้าของก๊วน")
+                db["posts"].remove(post)
+                save_db(db)
+                return self.send_json(200, {"ok": True})
+            save_db(db)
+            return self.send_json(200, {"post": public_post(db, post, user)})
 
 
 if __name__ == "__main__":
-    try:
-        server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
-    except OSError:
-        print("พอร์ต %d ถูกใช้อยู่ ลองพอร์ตอื่น:  PORT=8080 python3 server.py" % PORT)
-        raise SystemExit(1)
-    print("ก๊วนขาดขา พร้อมแล้ว → http://localhost:%d" % PORT)
-    print("เพื่อนที่อยู่ Wi-Fi เดียวกันเข้าได้ทาง http://<IP เครื่องนี้>:%d" % PORT)
-    try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        print("\nปิดเซิร์ฟเวอร์แล้ว")
+    print(f"🏸 เปิดเว็บที่ http://localhost:{PORT}")
+    ThreadingHTTPServer(("", PORT), Handler).serve_forever()
